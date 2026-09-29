@@ -1,0 +1,21 @@
+{
+  "name": "homepage-remove-bg-server",
+  "version": "1.0.0",
+  "private": true,
+  "description": "个人主页第三屏「一键去除图片背景」的后端：Express + Replicate 官方 SDK",
+  "main": "server.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node --watch server.js"
+  },
+  "engines": {
+    "node": ">=18.17"
+  },
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^2.0.1",
+    "replicate": "^1.0.0"
+  }
+}

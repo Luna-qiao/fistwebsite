@@ -1,0 +1,660 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文字生成图片</title>
+<!--
+  ================================================================
+   文字生成图片（AI 文生图）
+  ================================================================
+   风格：谷歌式的极简——大片留白、浅灰线条、蓝色主色、圆角胶囊、
+        没有渐变和花哨装饰，重点只放在「输入一句话」和「结果」上。
+
+   怎么用：
+     这一页必须通过后端打开（后端负责拿着 Key 去调 OpenRouter）：
+         cd server && npm start
+         然后浏览器访问 http://localhost:3000/imagine
+
+   想改配色：直接改下面 :root 里的变量即可。
+   想换模型 / 换比例：改 server/.env（OPENROUTER_IMAGE_MODEL）
+  ================================================================
+-->
+<style>
+/* ---------------- 设计令牌（想改风格只动这里） ---------------- */
+:root{
+  --bg:#ffffff;
+  --text:#202124;          /* 主文字 */
+  --sub:#5f6368;           /* 次要文字 */
+  --faint:#80868b;         /* 占位符 / 更淡的文字 */
+  --line:#dadce0;          /* 分隔线、边框 */
+  --line-soft:#f1f3f4;     /* 更浅的线 / 浅底色 */
+  --shade:#f8f9fa;         /* 浅灰底 */
+  --blue:#1a73e8;          /* 谷歌蓝：主色 */
+  --blue-dark:#1765cc;
+  --blue-soft:#e8f0fe;     /* 选中态浅蓝底 */
+  --blue-line:#d2e3fc;
+  --red:#d93025;
+  --red-soft:#fce8e6;
+  --green:#188038;
+  --radius:28px;           /* 输入框（胶囊） */
+  --radius-card:12px;
+  --shadow-1:0 1px 6px rgba(32,33,36,.10);
+  --shadow-2:0 1px 6px rgba(32,33,36,.28);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{
+  background:var(--bg);
+  color:var(--text);
+  font-family:"Google Sans","Google Sans Text",Roboto,-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  font-size:15px;
+  line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+button{font:inherit;color:inherit}
+a{color:var(--blue);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ---------------- 顶部栏 ---------------- */
+.bar{
+  height:64px;padding:0 20px;
+  display:flex;align-items:center;justify-content:space-between;
+  border-bottom:1px solid var(--line-soft);
+  position:sticky;top:0;background:rgba(255,255,255,.92);
+  backdrop-filter:saturate(180%) blur(8px);z-index:10;
+}
+.brand{display:flex;align-items:center;gap:10px;color:var(--text);font-size:16px;font-weight:500;letter-spacing:.1px}
+.brand:hover{text-decoration:none}
+.brand__mark{
+  width:28px;height:28px;border-radius:8px;background:var(--blue);
+  display:grid;place-items:center;flex:none;
+}
+.brand__mark svg{width:16px;height:16px;stroke:#fff;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+.bar__link{font-size:14px;color:var(--sub)}
+.bar__link:hover{color:var(--text);text-decoration:none}
+
+/* ---------------- 主体：窄栏居中，留白多 ---------------- */
+.wrap{max-width:860px;margin:0 auto;padding:56px 20px 80px}
+.hero{text-align:center;margin-bottom:32px}
+.hero h1{
+  margin:0 0 10px;font-size:38px;line-height:1.25;font-weight:400;letter-spacing:-.4px;
+}
+.hero p{margin:0;color:var(--sub);font-size:15px}
+.hero code{
+  font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  font-size:13px;background:var(--shade);border:1px solid var(--line-soft);
+  border-radius:6px;padding:1px 6px;color:var(--text);
+}
+
+/* ---------------- 提示条（后端没起来 / Key 没配好） ---------------- */
+.notice{
+  display:none;margin:0 auto 24px;max-width:760px;
+  border:1px solid var(--line);border-radius:var(--radius-card);
+  padding:14px 16px;font-size:14px;color:var(--sub);background:var(--shade);
+}
+.notice.is-on{display:block}
+.notice strong{color:var(--text);font-weight:500}
+.notice--warn{background:var(--red-soft);border-color:#f6c7c2;color:#a50e0e}
+.notice--warn strong{color:#a50e0e}
+
+/* ---------------- 输入区（仿谷歌搜索框：胶囊 + 细边 + 轻阴影） ---------------- */
+.composer{
+  max-width:760px;margin:0 auto;
+  border:1px solid var(--line);border-radius:var(--radius);
+  background:#fff;box-shadow:var(--shadow-1);
+  padding:16px 20px 12px;
+  transition:box-shadow .18s ease,border-color .18s ease;
+}
+.composer.is-focus{box-shadow:var(--shadow-2);border-color:transparent}
+
+.composer__top{display:flex;gap:12px;align-items:flex-start}
+.composer__icon{width:20px;height:20px;flex:none;margin-top:8px;stroke:var(--faint);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+textarea#prompt{
+  flex:1;min-height:52px;max-height:220px;resize:none;
+  border:0;outline:0;background:transparent;padding:6px 0;
+  font:inherit;font-size:17px;line-height:1.55;color:var(--text);
+}
+textarea#prompt::placeholder{color:var(--faint)}
+
+.composer__foot{
+  display:flex;align-items:center;gap:8px;flex-wrap:wrap;
+  border-top:1px solid var(--line-soft);margin-top:10px;padding-top:12px;
+}
+.spacer{flex:1}
+
+/* 比例胶囊 */
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{
+  height:32px;padding:0 13px;border-radius:16px;
+  border:1px solid var(--line);background:#fff;color:#3c4043;
+  font-size:13.5px;cursor:pointer;transition:background .15s,color .15s,border-color .15s;
+}
+.chip:hover{background:var(--shade)}
+.chip[aria-pressed="true"]{background:var(--blue-soft);border-color:var(--blue-line);color:var(--blue);font-weight:500}
+
+/* 主按钮：蓝色胶囊 */
+.go{
+  height:40px;padding:0 24px;border:0;border-radius:20px;
+  background:var(--blue);color:#fff;font-size:14.5px;font-weight:500;
+  cursor:pointer;display:inline-flex;align-items:center;gap:9px;
+  transition:background .15s,box-shadow .15s;
+}
+.go:hover{background:var(--blue-dark);box-shadow:0 1px 2px rgba(60,64,67,.3),0 1px 3px 1px rgba(60,64,67,.15)}
+.go:disabled{background:var(--line);color:#fff;cursor:not-allowed;box-shadow:none}
+.go__spin{
+  width:14px;height:14px;border-radius:50%;flex:none;
+  border:2px solid rgba(255,255,255,.45);border-top-color:#fff;
+  animation:spin .8s linear infinite;display:none;
+}
+.go.is-busy .go__spin{display:block}
+/* 生成中：按钮变成「中止」，保持可点 */
+.go--stop{background:#fff;color:var(--blue);box-shadow:inset 0 0 0 1px var(--line)}
+.go--stop:hover{background:var(--blue-soft);color:var(--blue-dark);box-shadow:inset 0 0 0 1px var(--blue-line)}
+.go--stop .go__spin{display:none}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* 文字按钮 */
+.btn-text{
+  height:40px;padding:0 14px;border:0;border-radius:20px;background:transparent;
+  color:var(--blue);font-size:14px;font-weight:500;cursor:pointer;
+}
+.btn-text:hover{background:rgba(26,115,232,.06)}
+.btn-text:disabled{color:var(--faint);cursor:not-allowed;background:transparent}
+
+.counter{margin-left:auto;font-size:12.5px;color:var(--faint);white-space:nowrap}
+.counter.is-over{color:var(--red)}
+
+/* ---------------- 灵感胶囊 ---------------- */
+.ideas{max-width:760px;margin:22px auto 0;text-align:center}
+.ideas__label{font-size:13px;color:var(--faint);margin-bottom:10px}
+.ideas__row{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.pill{
+  height:32px;padding:0 14px;border-radius:16px;border:0;
+  background:var(--line-soft);color:#3c4043;font-size:13.5px;cursor:pointer;
+  transition:background .15s,color .15s;
+}
+.pill:hover{background:#e8eaed;color:var(--text)}
+
+/* ---------------- 结果区 ---------------- */
+.results{max-width:860px;margin:48px auto 0}
+.results__head{
+  display:flex;align-items:baseline;justify-content:space-between;gap:12px;
+  border-bottom:1px solid var(--line-soft);padding-bottom:10px;margin-bottom:18px;
+}
+.results__head h2{margin:0;font-size:15px;font-weight:500;color:var(--text)}
+.results__head span{font-size:13px;color:var(--faint)}
+
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:18px}
+
+.card{
+  border:1px solid var(--line);border-radius:var(--radius-card);
+  overflow:hidden;background:#fff;display:flex;flex-direction:column;
+}
+.card__img{background:var(--shade);display:block}
+.card__img img{width:100%;height:auto;display:block}
+.card__meta{
+  display:flex;gap:6px;flex-wrap:wrap;padding:10px 12px 0;
+  font-size:12.5px;color:var(--faint);
+}
+.card__meta .dot{color:var(--line)}
+.card__prompt{
+  padding:6px 12px 0;font-size:13px;color:var(--sub);
+  display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;
+}
+.card__actions{display:flex;gap:4px;padding:6px 8px 10px;margin-top:auto}
+.card__actions .btn-text{height:34px;font-size:13.5px}
+
+/* 骨架屏（生成中） */
+.card--loading{justify-content:flex-start}
+.skeleton{
+  background:linear-gradient(90deg,#f1f3f4 25%,#e8eaed 37%,#f1f3f4 63%);
+  background-size:400% 100%;animation:shimmer 1.5s ease-in-out infinite;
+}
+@keyframes shimmer{0%{background-position:100% 0}100%{background-position:0 0}}
+.card--loading .skeleton:first-child{aspect-ratio:1/1}
+.card__status{padding:12px;font-size:13.5px;color:var(--sub);display:flex;align-items:center;gap:8px}
+.card__status .mini-spin{
+  width:13px;height:13px;border-radius:50%;border:2px solid var(--line);
+  border-top-color:var(--blue);animation:spin .8s linear infinite;flex:none;
+}
+
+/* 空状态 */
+.empty{text-align:center;color:var(--faint);font-size:14px;padding:34px 0}
+
+/* 错误框（谷歌风：浅红底 + 深红字） */
+.error{
+  max-width:860px;margin:24px auto 0;display:none;
+  background:var(--red-soft);border:1px solid #f6c7c2;border-radius:var(--radius-card);
+  padding:14px 16px;color:#a50e0e;font-size:14px;line-height:1.6;
+}
+.error.is-on{display:block}
+.error strong{display:block;margin-bottom:2px;font-weight:500}
+
+footer{
+  max-width:860px;margin:0 auto;padding:40px 20px 56px;
+  color:var(--faint);font-size:12.5px;text-align:center;
+}
+
+/* ---------------- 手机 ---------------- */
+@media (max-width:720px){
+  .wrap{padding:32px 16px 56px}
+  .hero h1{font-size:27px}
+  .composer{border-radius:24px;padding:14px 14px 10px}
+  textarea#prompt{font-size:16px}
+  .composer__foot{gap:6px}
+  .go{width:100%;justify-content:center;order:3}
+  .composer__foot .btn-text{order:4}
+  .counter{order:2;margin-left:auto}
+  .chips{order:1;width:100%}
+  .grid{grid-template-columns:1fr;gap:14px}
+  .bar__link{font-size:13px}
+}
+@media (prefers-reduced-motion:reduce){
+  .skeleton,.go__spin,.card__status .mini-spin{animation:none}
+}
+</style>
+</head>
+<body>
+
+<!-- ============ 顶部栏 ============ -->
+<header class="bar">
+  <a class="brand" href="index.html">
+    <span class="brand__mark" aria-hidden="true">
+      <svg viewBox="0 0 24 24"><path d="M12 3.2l1.7 4.5 4.5 1.7-4.5 1.7L12 15.6l-1.7-4.5-4.5-1.7 4.5-1.7L12 3.2Z"/><path d="M18.4 15.2l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2Z"/></svg>
+    </span>
+    文字生成图片
+  </a>
+  <a class="bar__link" href="index.html">回个人主页</a>
+</header>
+
+<main class="wrap">
+
+  <!-- ============ 标题 ============ -->
+  <section class="hero">
+    <h1>描述你想要的画面</h1>
+    <p>写一句话就行，AI 帮你把画面画出来 · 模型 <code id="model-name">openai/gpt-5.4-image-2</code></p>
+  </section>
+
+  <!-- 出问题时的提示条（默认隐藏） -->
+  <div class="notice" id="notice"></div>
+
+  <!-- ============ 输入区 ============ -->
+  <form class="composer" id="composer" autocomplete="off">
+    <div class="composer__top">
+      <svg class="composer__icon" viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M11 4.6a6.4 6.4 0 1 0 0 12.8 6.4 6.4 0 0 0 0-12.8Z"/><path d="M15.8 15.8 20 20"/>
+      </svg>
+      <label class="sr-only" for="prompt" style="position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)">图片描述</label>
+      <textarea id="prompt" rows="1" maxlength="2000"
+        placeholder="例如：一只戴着宇航头盔的橘猫，漂浮在星云里，电影感光线，超写实"></textarea>
+    </div>
+
+    <div class="composer__foot">
+      <div class="chips" id="ratios" role="group" aria-label="画面比例"></div>
+      <div class="spacer"></div>
+      <span class="counter" id="counter">0 / 2000</span>
+      <button type="button" class="btn-text" id="clear" disabled>清空</button>
+      <button type="submit" class="go" id="go">
+        <span class="go__spin" aria-hidden="true"></span>
+        <span id="go-text">生成图片</span>
+      </button>
+    </div>
+  </form>
+
+  <!-- ============ 灵感 ============ -->
+  <section class="ideas">
+    <div class="ideas__label">没有灵感？点一个试试</div>
+    <div class="ideas__row" id="ideas"></div>
+  </section>
+
+  <!-- ============ 错误提示 ============ -->
+  <div class="error" id="error" role="alert"></div>
+
+  <!-- ============ 结果 ============ -->
+  <section class="results">
+    <div class="results__head">
+      <h2>生成结果</h2>
+      <span id="results-hint">生成的图可以直接下载</span>
+    </div>
+    <div class="grid" id="grid"></div>
+    <div class="empty" id="empty">还没有作品，上面写一句描述，点「生成图片」试试</div>
+  </section>
+
+</main>
+
+<footer>
+  图片由 OpenRouter 上的 <span id="model-name-2">openai/gpt-5.4-image-2</span> 生成 · 每次调用都会计费 · 请勿用生成的内容做侵权或违规用途
+</footer>
+
+<script>
+(function () {
+  'use strict';
+
+  /* ---------------- 取元素 ---------------- */
+  var form = document.getElementById('composer');
+  var promptEl = document.getElementById('prompt');
+  var goBtn = document.getElementById('go');
+  var goText = document.getElementById('go-text');
+  var clearBtn = document.getElementById('clear');
+  var counter = document.getElementById('counter');
+  var ratiosEl = document.getElementById('ratios');
+  var ideasEl = document.getElementById('ideas');
+  var grid = document.getElementById('grid');
+  var emptyEl = document.getElementById('empty');
+  var errorEl = document.getElementById('error');
+  var noticeEl = document.getElementById('notice');
+  var modelNameEls = [document.getElementById('model-name'), document.getElementById('model-name-2')];
+
+  /* ---------------- 可调参数 ---------------- */
+  var MAX_PROMPT = 2000;        /* 和后端 MAX_PROMPT 保持一致 */
+  var MAX_CARDS = 12;           /* 页面上最多留几张，太多会吃内存 */
+  var RATIOS = [
+    { v: '1:1',  label: '1:1 方形' },
+    { v: '4:3',  label: '4:3 横向' },
+    { v: '3:4',  label: '3:4 竖向' },
+    { v: '16:9', label: '16:9 宽屏' },
+    { v: '9:16', label: '9:16 手机竖屏' },
+    { v: '21:9', label: '21:9 超宽' }
+  ];
+  var IDEAS = [
+    '一只戴着宇航头盔的橘猫，漂浮在星云里，电影感光线',
+    '极简风格的咖啡店招牌，白底，扁平插画',
+    '雨后的城市街道，霓虹倒影，赛博朋克色调',
+    '水墨风格的远山与孤舟，留白很多',
+    '一台复古相机的产品图，柔和自然光，浅色背景',
+    '沙漠里的玻璃温室，日落时分，超广角'
+  ];
+
+  var ratio = '1:1';
+  var busy = false;
+  var controller = null;
+  var timerId = null;
+
+  /* ---------------- 比例胶囊 ---------------- */
+  RATIOS.forEach(function (item, i) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip';
+    b.textContent = item.label;
+    b.setAttribute('aria-pressed', i === 0 ? 'true' : 'false');
+    b.dataset.value = item.v;
+    b.addEventListener('click', function () {
+      if (busy) return;
+      ratio = item.v;
+      Array.prototype.forEach.call(ratiosEl.children, function (c) {
+        c.setAttribute('aria-pressed', c === b ? 'true' : 'false');
+      });
+    });
+    ratiosEl.appendChild(b);
+  });
+
+  /* ---------------- 灵感胶囊 ---------------- */
+  IDEAS.forEach(function (text) {
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'pill';
+    b.textContent = text.length > 18 ? text.slice(0, 18) + '…' : text;
+    b.title = text;
+    b.addEventListener('click', function () {
+      if (busy) return;
+      promptEl.value = text;
+      updateCounter();
+      grow();
+      promptEl.focus();
+      hideError();
+    });
+    ideasEl.appendChild(b);
+  });
+
+  /* ---------------- 小工具 ---------------- */
+  function updateCounter() {
+    var n = promptEl.value.length;
+    counter.textContent = n + ' / ' + MAX_PROMPT;
+    counter.classList.toggle('is-over', n >= MAX_PROMPT);
+    clearBtn.disabled = busy || n === 0;
+    /* 生成中按钮保持可点，因为它这时候是「中止」 */
+    goBtn.disabled = busy ? false : n === 0;
+  }
+
+  /* 输入框跟着内容长高，最多长到 CSS 里的 max-height */
+  function grow() {
+    promptEl.style.height = 'auto';
+    promptEl.style.height = Math.min(promptEl.scrollHeight, 220) + 'px';
+  }
+
+  function showError(title, detail) {
+    errorEl.innerHTML = '';
+    var strong = document.createElement('strong');
+    strong.textContent = title;
+    errorEl.appendChild(strong);
+    if (detail) errorEl.appendChild(document.createTextNode(detail));
+    errorEl.classList.add('is-on');
+  }
+  function hideError() { errorEl.classList.remove('is-on'); }
+
+  function showNotice(html, warn) {
+    noticeEl.innerHTML = html;
+    noticeEl.classList.toggle('is-on', true);
+    noticeEl.classList.toggle('notice--warn', !!warn);
+  }
+
+  function setBusy(on) {
+    busy = on;
+    goBtn.classList.toggle('is-busy', on);
+    goBtn.classList.toggle('go--stop', on);
+    goText.textContent = on ? '中止' : '生成图片';
+    updateCounter();
+  }
+
+  /* ---------------- 生成 ---------------- */
+  function submit() {
+    if (busy) return;
+
+    var prompt = promptEl.value.trim();
+    if (!prompt) { showError('还没有写描述', '先在上面写一句你想要什么画面，再点「生成图片」。'); promptEl.focus(); return; }
+    if (location.protocol === 'file:') {
+      showError('需要从后端打开', '这一页要由后端转发请求（Key 只在后端）。请先启动服务：cd server 然后 npm start，再访问 http://localhost:3000/imagine');
+      return;
+    }
+
+    hideError();
+    setBusy(true);
+
+    var card = document.createElement('article');
+    card.className = 'card card--loading';
+    card.innerHTML = ''
+      + '<div class="skeleton"></div>'
+      + '<div class="card__status"><span class="mini-spin"></span><span class="txt">正在作画，通常十几秒…</span></div>';
+    grid.insertBefore(card, grid.firstChild);
+    emptyEl.style.display = 'none';
+
+    var startedAt = Date.now();
+    var txt = card.querySelector('.txt');
+    timerId = setInterval(function () {
+      txt.textContent = '正在作画，已等待 ' + Math.round((Date.now() - startedAt) / 1000) + ' 秒…';
+    }, 1000);
+
+    controller = new AbortController();
+
+    fetch('/api/generate-image', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ prompt: prompt, aspect_ratio: ratio }),
+      signal: controller.signal
+    }).then(function (res) {
+      return res.json().catch(function () { return null; }).then(function (data) {
+        return { ok: res.ok, status: res.status, data: data };
+      });
+    }).then(function (r) {
+      if (!r.ok || !r.data || !r.data.ok) {
+        throw new Error((r.data && r.data.error) || ('服务器返回了 HTTP ' + r.status));
+      }
+      renderCard(card, r.data, prompt);
+    }).catch(function (err) {
+      card.remove();
+      if (err.name === 'AbortError') {
+        showError('已中止', '这次生成被取消了，没有消耗新的调用。');
+      } else if (err instanceof TypeError) {
+        showError('连不上后端', '请确认后端已经启动，并且这一页是从 http://localhost:3000/imagine 打开的。');
+      } else {
+        showError('生成失败', err.message || '未知错误');
+      }
+    }).then(function () {
+      clearInterval(timerId);
+      controller = null;
+      setBusy(false);
+      trim();
+    });
+  }
+
+  /* 把生成的图片变成一张卡片 */
+  function renderCard(card, data, promptText) {
+    card.classList.remove('card--loading');
+    card.innerHTML = '';
+
+    var box = document.createElement('div');
+    box.className = 'card__img';
+    var img = document.createElement('img');
+    img.src = data.image;
+    img.alt = promptText.slice(0, 60);
+    img.loading = 'lazy';
+    box.appendChild(img);
+    card.appendChild(box);
+
+    var meta = document.createElement('div');
+    meta.className = 'card__meta';
+    var bits = [data.aspectRatio || ratio, (data.seconds || 0) + 's'];
+    if (typeof data.cost === 'number') bits.push('$' + data.cost.toFixed(4));
+    bits.forEach(function (t, i) {
+      if (i) { var d = document.createElement('span'); d.className = 'dot'; d.textContent = '·'; meta.appendChild(d); }
+      var s = document.createElement('span'); s.textContent = t; meta.appendChild(s);
+    });
+    card.appendChild(meta);
+
+    var p = document.createElement('div');
+    p.className = 'card__prompt';
+    p.textContent = promptText;
+    p.title = promptText;
+    card.appendChild(p);
+
+    var actions = document.createElement('div');
+    actions.className = 'card__actions';
+
+    var a = document.createElement('a');
+    a.className = 'btn-text';
+    a.href = data.image;
+    a.download = 'ai-' + new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19) + '.png';
+    a.textContent = '下载';
+    actions.appendChild(a);
+
+    var copyBtn = document.createElement('button');
+    copyBtn.type = 'button';
+    copyBtn.className = 'btn-text';
+    copyBtn.textContent = '复制描述';
+    copyBtn.addEventListener('click', function () { copyText(promptText, copyBtn); });
+    actions.appendChild(copyBtn);
+
+    var againBtn = document.createElement('button');
+    againBtn.type = 'button';
+    againBtn.className = 'btn-text';
+    againBtn.textContent = '再画一张';
+    againBtn.addEventListener('click', function () {
+      if (busy) return;
+      promptEl.value = promptText;
+      updateCounter(); grow();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      submit();
+    });
+    actions.appendChild(againBtn);
+
+    card.appendChild(actions);
+  }
+
+  /* 复制到剪贴板（http://localhost 下 navigator.clipboard 可用；不行就退回老办法） */
+  function copyText(text, btn) {
+    var done = function () {
+      var old = btn.textContent;
+      btn.textContent = '已复制';
+      setTimeout(function () { btn.textContent = old; }, 1200);
+    };
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(done, function () { fallback(); });
+    } else { fallback(); }
+
+    function fallback() {
+      var ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); done(); } catch (e) { /* 忽略 */ }
+      document.body.removeChild(ta);
+    }
+  }
+
+  /* 控制页面上卡片数量，避免越攒越多 */
+  function trim() {
+    while (grid.children.length > MAX_CARDS) {
+      grid.removeChild(grid.lastChild);
+    }
+    syncEmpty();
+  }
+
+  /* 一张图都没有时，显示那句引导文案 */
+  function syncEmpty() {
+    emptyEl.style.display = grid.children.length ? 'none' : 'block';
+  }
+
+  /* ---------------- 事件绑定 ---------------- */
+  form.addEventListener('submit', function (e) { e.preventDefault(); submit(); });
+
+  promptEl.addEventListener('input', function () { updateCounter(); grow(); hideError(); });
+  promptEl.addEventListener('focus', function () { form.classList.add('is-focus'); });
+  promptEl.addEventListener('blur', function () { form.classList.remove('is-focus'); });
+
+  /* 回车直接生成，Shift+回车换行 */
+  promptEl.addEventListener('keydown', function (e) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.isComposing) {
+      e.preventDefault();
+      submit();
+    }
+  });
+
+  /* 生成中时按钮变成「中止」 */
+  goBtn.addEventListener('click', function () {
+    if (busy && controller) { controller.abort(); }
+  });
+
+  clearBtn.addEventListener('click', function () {
+    if (busy) return;
+    promptEl.value = '';
+    updateCounter(); grow(); hideError();
+    promptEl.focus();
+  });
+
+  /* ---------------- 开机自检：后端在不在、Key 配没配 ---------------- */
+  (function check() {
+    if (location.protocol === 'file:') {
+      showNotice('<strong>这一页需要后端才能用。</strong> 请先启动服务（cd server 然后 npm start），再用 http://localhost:3000/imagine 打开。', true);
+      return;
+    }
+    fetch('/api/health').then(function (r) { return r.json(); }).then(function (h) {
+      if (h && h.imageModel) {
+        modelNameEls.forEach(function (el) { if (el) el.textContent = h.imageModel; });
+      }
+      if (h && h.hasOpenrouterKey === false) {
+        showNotice('<strong>还没配置 OPENROUTER_API_KEY。</strong> 把 server/.env.example 复制成 server/.env，填上 Key（获取地址 https://openrouter.ai/keys），然后重启后端。', true);
+      }
+    }).catch(function () {
+      showNotice('<strong>连不上后端。</strong> 请确认服务已经启动，并且这一页是从 http://localhost:3000/imagine 打开的。', true);
+    });
+  })();
+
+  updateCounter();
+  grow();
+})();
+</script>
+</body>
+</html>

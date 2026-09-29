@@ -1,0 +1,20 @@
+# ===== 依赖与本地环境（不要上传）=====
+node_modules/
+server/node_modules/
+# 环境变量文件里存着 API Key，绝对不能上传
+.env
+server/.env
+npm-debug.log*
+yarn-error.log*
+
+# ===== 编辑器 / 系统文件 =====
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===== 分享用的打包产物 =====
+.trae-html-share-packages/
+
+# ===== 手机导出的重复原图（头像已另有 avatar.jpg）=====
+微信图片_*.jpg
